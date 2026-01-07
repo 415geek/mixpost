@@ -8,68 +8,50 @@ import path from 'path';
 import { homedir } from 'os';
 
 export default defineConfig(({ command, mode }) => {
-  // Load current .env-file
+  // Load .env variables
   const env = loadEnv(mode, process.cwd(), '');
 
-  // Build a safe server config:
-  // - Only enable Valet/HTTPS certs for LOCAL DEV (command === 'serve')
-  // - Never try to read certs during build/CI/Railway
-  const isDevServer = command === 'serve';
+  // Default: no special dev server config (safe for production builds)
+  let serverConfig = undefined;
 
-  // Railway sets RAILWAY_ENVIRONMENT (and often RAILWAY_STATIC_URL / etc.)
-  const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
-
-  // If you want manual override, set DISABLE_VITE_HTTPS=1 in Railway Variables
-  const disableHttps = env.DISABLE_VITE_HTTPS === '1' || env.DISABLE_VITE_HTTPS === 'true';
-
-  let serverConfig = {};
-
-  if (isDevServer && !isRailway && !disableHttps) {
-    // Only for local dev
-    const appUrl = env.APP_URL || '';
-    let host = null;
-
+  /**
+   * Only enable Valet HTTPS certs in LOCAL DEV (vite serve).
+   * Never try to read certificates during `vite build` (Railway/CI).
+   */
+  if (command === 'serve' && env.APP_URL) {
     try {
-      host = appUrl ? new URL(appUrl).host : null;
-    } catch (e) {
-      host = null;
-    }
+      const host = new URL(env.APP_URL).host;
+      const homeDir = homedir();
 
-    const homeDir = homedir();
-
-    if (host && homeDir) {
+      // Allow overriding cert path; default to Valet location
       const certificatesPath =
         env.CERTIFICATES_PATH !== undefined
           ? env.CERTIFICATES_PATH
           : `.config/valet/Certificates/${host}`;
 
-      // Read certs ONLY if files exist; otherwise fallback to plain HTTP dev server
       const keyPath = path.resolve(homeDir, `${certificatesPath}.key`);
-      const crtPath = path.resolve(homeDir, `${certificatesPath}.crt`);
+      const certPath = path.resolve(homeDir, `${certificatesPath}.crt`);
 
-      const hasKey = fs.existsSync(keyPath);
-      const hasCrt = fs.existsSync(crtPath);
-
-      if (hasKey && hasCrt) {
+      // Only set https if both files exist; otherwise fall back to plain http
+      if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
         serverConfig = {
           https: {
             key: fs.readFileSync(keyPath),
-            cert: fs.readFileSync(crtPath),
+            cert: fs.readFileSync(certPath),
           },
           hmr: { host },
           host,
         };
       } else {
-        // No certs found locally -> use HTTP dev server
+        // No certs found: still allow dev server to run
         serverConfig = {
-          host: true,
+          hmr: { host },
+          host,
         };
       }
-    } else {
-      // No APP_URL or invalid URL -> use HTTP dev server
-      serverConfig = {
-        host: true,
-      };
+    } catch (e) {
+      // If APP_URL isn't a valid URL or anything fails, just run without serverConfig
+      serverConfig = undefined;
     }
   }
 
