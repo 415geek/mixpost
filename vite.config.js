@@ -8,22 +8,19 @@ import path from 'path';
 import { homedir } from 'os';
 
 export default defineConfig(({ command, mode }) => {
-  // Load .env variables
   const env = loadEnv(mode, process.cwd(), '');
 
-  // Default: no special dev server config (safe for production builds)
+  // 默认不启用 https/server 配置（Railway build 不需要）
   let serverConfig = undefined;
 
-  /**
-   * Only enable Valet HTTPS certs in LOCAL DEV (vite serve).
-   * Never try to read certificates during `vite build` (Railway/CI).
-   */
-  if (command === 'serve' && env.APP_URL) {
+  // 只在本地开发启动 dev server 时（vite serve）才尝试读取 valet 证书
+  const isDevServer = command === 'serve';
+
+  if (isDevServer && env.APP_URL) {
     try {
       const host = new URL(env.APP_URL).host;
       const homeDir = homedir();
 
-      // Allow overriding cert path; default to Valet location
       const certificatesPath =
         env.CERTIFICATES_PATH !== undefined
           ? env.CERTIFICATES_PATH
@@ -32,7 +29,7 @@ export default defineConfig(({ command, mode }) => {
       const keyPath = path.resolve(homeDir, `${certificatesPath}.key`);
       const certPath = path.resolve(homeDir, `${certificatesPath}.crt`);
 
-      // Only set https if both files exist; otherwise fall back to plain http
+      // 证书存在才启用 https（否则别炸）
       if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
         serverConfig = {
           https: {
@@ -43,14 +40,14 @@ export default defineConfig(({ command, mode }) => {
           host,
         };
       } else {
-        // No certs found: still allow dev server to run
+        // 没证书就用普通 http dev server
         serverConfig = {
           hmr: { host },
           host,
         };
       }
     } catch (e) {
-      // If APP_URL isn't a valid URL or anything fails, just run without serverConfig
+      // APP_URL 不是合法 URL 或其他异常：直接不设置 serverConfig
       serverConfig = undefined;
     }
   }
